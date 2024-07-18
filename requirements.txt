@@ -1,0 +1,7 @@
+oandapyV20
+pandas
+numpy
+pytest
+matplotlib
+scikit-learn
+requests
