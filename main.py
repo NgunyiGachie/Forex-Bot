@@ -6,6 +6,10 @@ import oandapyV20.endpoints.pricing as pricing
 import oandapyV20.endpoints.orders as orders
 
 from config.config import *
+from strategies.fibonacci_retracement import calculate_fibonacci_levels
+from strategies.market_structure import break_in_market_structure
+from strategies.riskmanagement import calculate_stop_loss, calculate_take_profit
+
 
 client = oandapyV20.API(access_token=ACCESS_TOKEN)
 
