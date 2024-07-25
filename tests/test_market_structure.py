@@ -10,4 +10,4 @@ def test_break_in_market_structure():
     
     result = break_in_market_structure(df)
     
-    assert result is True  # Expecting a True value indicating a market structure break
+    assert result is True  
