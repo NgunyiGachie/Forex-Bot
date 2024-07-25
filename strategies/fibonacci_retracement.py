@@ -3,6 +3,7 @@ import numpy as np
 import backtrader as bt
 
 def calculate_fibonacci_levels(df):
+    # Check if the required columns exist
     if not all(col in df.columns for col in ['High', 'Low']):
         raise KeyError("Required columns are missing from the DataFrame")
     
@@ -29,6 +30,7 @@ class FibonacciStrategy(bt.SignalStrategy):
         self.data_high = self.datas[0].high
         self.data_low = self.datas[0].low
         
+        # Load and set Fibonacci level
         self.df = self.load_and_check_data('data/fixed_EUR_USD_Historical_Data.csv')
         self.params.fib_level = calculate_fibonacci_levels(self.df)
         print(f"Initial Fibonacci Level: {self.params.fib_level}")
@@ -42,9 +44,10 @@ class FibonacciStrategy(bt.SignalStrategy):
             print(df.columns)
             print(df.info())
 
+            # Convert and clean DataFrame
             df['Date'] = pd.to_datetime(df['Date'], format='%Y-%m-%d')
             df.set_index('Date', inplace=True)
-            df.dropna(axis=1, how='all', inplace=True)  
+            df.dropna(axis=1, how='all', inplace=True)  # Drop columns with all NaN values
 
             print("Data after processing:")
             print(df.head())
@@ -63,6 +66,7 @@ class FibonacciStrategy(bt.SignalStrategy):
         print(f"Current Price: {self.data_close[0]}")
         print(f"Fibonacci Level: {self.params.fib_level}")
 
+        # Ensure enough data is available before checking conditions
         if len(self.data_close) > 1:
             buy_condition = self.buy_signal_condition()
             sell_condition = self.sell_signal_condition()
@@ -93,13 +97,17 @@ class FibonacciStrategy(bt.SignalStrategy):
 
     def sell_signal_condition(self):
         current_price = self.data_close[0]
-
+        
+        # Ensure there are enough data points
         if len(self.data_high) < 2:
-            print("Not enough data to determine sell condition.")
             return False
 
-        previous_day_high = self.data_high.get(size=1)[-2]
-        previous_day_low = self.data_low.get(size=1)[-2]
+        # Get previous day high and low values
+        try:
+            previous_day_high = self.data_high.get(size=1)[-2]
+            previous_day_low = self.data_low.get(size=1)[-2]
+        except IndexError:
+            return False
 
         print(f"Sell Signal Condition Check: Current Price: {current_price}, Previous Day High: {previous_day_high}, Previous Day Low: {previous_day_low}")
         
