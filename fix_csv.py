@@ -1,6 +1,6 @@
 import pandas as pd
 
-original_file_path = '/home/anthony/Downloads/JPY=X (1).csv'
+original_file_path = '/home/anthony/Downloads/EURUSD=X.csv'
 
 fixed_file_path = 'data/fixed_EUR_USD_Historical_Data.csv'
 

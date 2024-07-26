@@ -1,23 +1,24 @@
 import pandas as pd
 import backtrader as bt
+import numpy as np
 
 def calculate_fibonacci_levels(df):
     high_price = df['High'].max()
     low_price = df['Low'].min()
     diff = high_price - low_price
     fib_levels = {
-        '38.2%': high_price - (diff * 0.382),
         '50%': high_price - (diff * 0.5),
-        '61.8%': high_price - (diff * 0.618)
+        '61.8%': high_price - (diff * 0.618),
+        '38.2%': high_price - (diff * 0.382)
     }
     return fib_levels
 
 class CombinedSMARetracementStrategy(bt.SignalStrategy):
     params = (
-        ('sma_short_period', 2),
-        ('sma_long_period', 4),
-        ('stop_loss', 0.01),
-        ('take_profit', 0.02),
+        ('sma_short_period', 20),
+        ('sma_long_period', 30),
+        ('stop_loss', 0.02),
+        ('take_profit', 0.04),
         ('fib_levels', None)  
     )
 
@@ -52,36 +53,39 @@ class CombinedSMARetracementStrategy(bt.SignalStrategy):
     def buy_signal_condition(self):
         try:
             in_uptrend = self.sma_short[0] > self.sma_long[0]
-            current_close = self.data_close[0]
-            prev_close = self.data_close[-1]
-            fib_level_50 = self.params.fib_levels['50%']
-            fib_level_38_2 = self.params.fib_levels['38.2%']
-            
-            print(f"Buy Signal - Current Close: {current_close}, Previous Close: {prev_close}, Fib Levels: {self.params.fib_levels}")
-
-            pullback_to_fib = (current_close <= fib_level_50 and prev_close > fib_level_50) or \
-                            (current_close <= fib_level_38_2 and prev_close > fib_level_38_2)
+            pullback_to_fib = self.data_close[0] <= self.params.fib_levels['50%'] and self.data_close[-1] > self.params.fib_levels['50%']
             return in_uptrend and pullback_to_fib
         except IndexError as e:
             print(f"IndexError in buy signal condition: {e}")
         return False
-
+        
     def sell_signal_condition(self):
         try:
             in_downtrend = self.sma_short[0] < self.sma_long[0]
-            current_close = self.data_close[0]
-            prev_close = self.data_close[-1]
-            fib_level_50 = self.params.fib_levels['50%']
-            fib_level_38_2 = self.params.fib_levels['38.2%']
-            
-            print(f"Sell Signal - Current Close: {current_close}, Previous Close: {prev_close}, Fib Levels: {self.params.fib_levels}")
-
-            pullback_to_fib = (current_close >= fib_level_50 and prev_close < fib_level_50) or \
-                            (current_close >= fib_level_38_2 and prev_close < fib_level_38_2)
+            pullback_to_fib = self.data_close[0] >= self.params.fib_levels['50%'] and self.data_close[-1] < self.params.fib_levels['50%']
             return in_downtrend and pullback_to_fib
         except IndexError as e:
             print(f"IndexError in sell signal condition: {e}")
         return False
+
+    def sell_bracket(self):
+        if self.order:
+            stop_price = self.data_close[0] * (1 - self.params.stop_loss) if self.order.isbuy() else self.data_close[0] * (1 + self.params.stop_loss)
+            take_profit_price = self.data_close[0] * (1 + self.params.take_profit) if self.order.isbuy() else self.data_close[0] * (1 - self.params.take_profit)
+
+            if self.order.isbuy():
+                print(f"Placing Sell Stop Order at: {stop_price}")
+                print(f"Placing Sell Limit Order at: {take_profit_price}")
+            else:
+                print(f"Placing Buy Stop Order at: {stop_price}")
+                print(f"Placing Buy Limit Order at: {take_profit_price}")
+
+            self.sell(
+                exectype=bt.Order.Stop, price=stop_price, parent=self.order
+            )
+            self.sell(
+                exectype=bt.Order.Limit, price=take_profit_price, parent=self.order
+            )
 
     def notify_order(self, order):
         if order.status in [order.Submitted, order.Accepted]:
@@ -104,28 +108,3 @@ class CombinedSMARetracementStrategy(bt.SignalStrategy):
                 print(f"Order {order.ref} Rejected")
 
         self.order = None
-
-def main():
-    df = pd.read_csv('data/fixed_EUR_USD_Historical_Data.csv')
-    df['Date'] = pd.to_datetime(df['Date'], format='%Y-%m-%d')
-    df.set_index('Date', inplace=True)
-    df.dropna(inplace=True)
-
-    fib_levels = calculate_fibonacci_levels(df)
-    print(f"Initial Fibonacci Levels: {fib_levels}")
-
-    cerebro = bt.Cerebro()
-    cerebro.addstrategy(CombinedSMARetracementStrategy, fib_levels=fib_levels)
-
-    data = bt.feeds.PandasData(dataname=df)
-    cerebro.adddata(data)
-
-    cerebro.broker.set_cash(10000)
-    cerebro.broker.setcommission(commission=0.001)
-
-    print('Starting Portfolio Value: %.2f' % cerebro.broker.getvalue())
-    cerebro.run()
-    print('Ending Portfolio Value: %.2f' % cerebro.broker.getvalue())
-
-if __name__ == '__main__':
-    main()
