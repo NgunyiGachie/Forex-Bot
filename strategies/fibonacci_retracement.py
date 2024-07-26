@@ -1,117 +1,91 @@
 import pandas as pd
-import numpy as np
 import backtrader as bt
+import numpy as np
 
 def calculate_fibonacci_levels(df):
-    # Check if the required columns exist
-    if not all(col in df.columns for col in ['High', 'Low']):
-        raise KeyError("Required columns are missing from the DataFrame")
-    
     high_price = df['High'].max()
     low_price = df['Low'].min()
-    
-    if pd.isna(high_price) or pd.isna(low_price):
-        return np.nan
-
     diff = high_price - low_price
-    fib_50 = high_price - (diff * 0.5)
-    return fib_50
+    fib_levels = {
+        '50%': high_price - (diff * 0.5),
+        '61.8%': high_price - (diff * 0.618),
+        '38.2%': high_price - (diff * 0.382)
+    }
+    return fib_levels
 
-class FibonacciStrategy(bt.SignalStrategy):
+class CombinedSMARetracementStrategy(bt.SignalStrategy):
     params = (
-        ('stop_loss', 0.01),
-        ('take_profit', 0.02)
+        ('sma_short_period', 10),
+        ('sma_long_period', 30),
+        ('stop_loss', 0.02),
+        ('take_profit', 0.04),
+        ('fib_levels', None)  
     )
 
     def __init__(self):
         self.order = None
-        self.last_signal_date = None
         self.data_close = self.datas[0].close
         self.data_high = self.datas[0].high
         self.data_low = self.datas[0].low
+
+        self.sma_short = bt.indicators.SimpleMovingAverage(self.data_close, period=self.params.sma_short_period)
+        self.sma_long = bt.indicators.SimpleMovingAverage(self.data_close, period=self.params.sma_long_period)
         
-        # Load and set Fibonacci level
-        self.df = self.load_and_check_data('data/fixed_EUR_USD_Historical_Data.csv')
-        self.params.fib_level = calculate_fibonacci_levels(self.df)
-        print(f"Initial Fibonacci Level: {self.params.fib_level}")
-
-    def load_and_check_data(self, file_path):
-        try:
-            df = pd.read_csv(file_path)
-            print("Data Loaded Successfully")
-            print("Initial DataFrame:")
-            print(df.head())
-            print(df.columns)
-            print(df.info())
-
-            # Convert and clean DataFrame
-            df['Date'] = pd.to_datetime(df['Date'], format='%Y-%m-%d')
-            df.set_index('Date', inplace=True)
-            df.dropna(axis=1, how='all', inplace=True)  # Drop columns with all NaN values
-
-            print("Data after processing:")
-            print(df.head())
-            print(df.info())
-
-            return df
-        except Exception as e:
-            print(f"Error loading data: {e}")
-            return pd.DataFrame()
+        if self.params.fib_levels is None:
+            raise ValueError("Fibonacci levels must be provided")
+        
+        print(f"Initial Fibonacci Levels: {self.params.fib_levels}")
 
     def next(self):
         if self.order:
             return
 
-        print("Checking trading signals...")
-        print(f"Current Price: {self.data_close[0]}")
-        print(f"Fibonacci Level: {self.params.fib_level}")
+        if self.buy_signal_condition():
+            self.order = self.buy()
+            self.sell_bracket() 
+            print(f"Buy Order Executed at: {self.data_close[0]}")
 
-        # Ensure enough data is available before checking conditions
-        if len(self.data_close) > 1:
-            buy_condition = self.buy_signal_condition()
-            sell_condition = self.sell_signal_condition()
-            
-            print(f"Buy Signal Condition Met: {buy_condition}")
-            print(f"Sell Signal Condition Met: {sell_condition}")
-
-            if buy_condition:
-                print("Executing Buy Order")
-                self.buy(size=1)
-                self.order = self.buy()
-                print(f"Buy Order Executed at: {self.data_close[0]}")
-
-            elif sell_condition:
-                print("Executing Sell Order")
-                self.sell(size=1)
-                self.order = self.sell()
-                print(f"Sell Order Executed at: {self.data_close[0]}")
+        elif self.sell_signal_condition():
+            self.order = self.sell()
+            self.sell_bracket() 
+            print(f"Sell Order Executed at: {self.data_close[0]}")
 
     def buy_signal_condition(self):
-        current_price = self.data_close[0]
-        if pd.isna(self.params.fib_level):
-            print("Fibonacci level is not set or is NaN")
-            return False
-
-        print(f"Buy Signal Condition Check: {current_price} vs {self.params.fib_level}")
-        return abs(current_price - self.params.fib_level) < (0.0001 * current_price)
-
-    def sell_signal_condition(self):
-        current_price = self.data_close[0]
-        
-        # Ensure there are enough data points
-        if len(self.data_high) < 2:
-            return False
-
-        # Get previous day high and low values
         try:
-            previous_day_high = self.data_high.get(size=1)[-2]
-            previous_day_low = self.data_low.get(size=1)[-2]
-        except IndexError:
-            return False
-
-        print(f"Sell Signal Condition Check: Current Price: {current_price}, Previous Day High: {previous_day_high}, Previous Day Low: {previous_day_low}")
+            in_uptrend = self.sma_short[0] > self.sma_long[0]
+            pullback_to_fib = self.data_close[0] <= self.params.fib_levels['50%'] and self.data_close[-1] > self.params.fib_levels['50%']
+            return in_uptrend and pullback_to_fib
+        except IndexError as e:
+            print(f"IndexError in buy signal condition: {e}")
+        return False
         
-        return current_price > previous_day_high or current_price < previous_day_low
+    def sell_signal_condition(self):
+        try:
+            in_downtrend = self.sma_short[0] < self.sma_long[0]
+            pullback_to_fib = self.data_close[0] >= self.params.fib_levels['50%'] and self.data_close[-1] < self.params.fib_levels['50%']
+            return in_downtrend and pullback_to_fib
+        except IndexError as e:
+            print(f"IndexError in sell signal condition: {e}")
+        return False
+
+    def sell_bracket(self):
+        if self.order:
+            stop_price = self.data_close[0] * (1 - self.params.stop_loss) if self.order.isbuy() else self.data_close[0] * (1 + self.params.stop_loss)
+            take_profit_price = self.data_close[0] * (1 + self.params.take_profit) if self.order.isbuy() else self.data_close[0] * (1 - self.params.take_profit)
+
+            if self.order.isbuy():
+                print(f"Placing Sell Stop Order at: {stop_price}")
+                print(f"Placing Sell Limit Order at: {take_profit_price}")
+            else:
+                print(f"Placing Buy Stop Order at: {stop_price}")
+                print(f"Placing Buy Limit Order at: {take_profit_price}")
+
+            self.sell(
+                exectype=bt.Order.Stop, price=stop_price, parent=self.order
+            )
+            self.sell(
+                exectype=bt.Order.Limit, price=take_profit_price, parent=self.order
+            )
 
     def notify_order(self, order):
         if order.status in [order.Submitted, order.Accepted]:
@@ -126,5 +100,11 @@ class FibonacciStrategy(bt.SignalStrategy):
 
         elif order.status in [order.Canceled, order.Margin, order.Rejected]:
             print(f"Order {order.ref} Canceled/Margin/Rejected")
+            if order.status == order.Canceled:
+                print(f"Order {order.ref} Canceled")
+            elif order.status == order.Margin:
+                print(f"Order {order.ref} Margin Call")
+            elif order.status == order.Rejected:
+                print(f"Order {order.ref} Rejected")
 
         self.order = None
